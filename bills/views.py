@@ -1,7 +1,8 @@
+import time
 import string
 
 from django.db.models import Q
-from django.shortcuts import render
+from django.shortcuts import render, get_object_or_404
 
 from django.contrib.auth.models import User
 
@@ -166,16 +167,21 @@ def bill_list_current_session(request):
 
     bills = Bill.objects.filter(**filters).order_by(
         '-actions__date').select_related('legislative_session').prefetch_related(
-            'sponsorships', 'actions').distinct()  # [:settings.NUMBER_OF_LATEST_ACTIONS]
+            'sponsorships', 'actions').distinct()[:settings.NUMBER_OF_LATEST_ACTIONS]
 
     # force DB query now and append latest_action to each bill
     # set is called first to remove duplicates - distinct does not work above because
     # of the 'order-by' paramater - that adds a field and causes distinct to not work as expected
-    bills = set(bills)
     for bill in bills:
         # use all() so the prefetched actions can be used, could possibly impove
         # via smarter use of Prefetch()
-        bill.latest_action = list(bill.actions.all())[-1]
+        all_actions = list(bill.actions.all())
+        latest_action = all_actions[-1]
+        for action in all_actions:
+            date = time.strptime(action.date, '%Y-%m-%d')
+            if date > time.strptime(latest_action.date, '%Y-%m-%d'):
+                bill.latest_action = action
+        bill.latest_action = latest_action
 
     subjects = _mark_selected(subjects, filter_subjects)
 
@@ -356,8 +362,7 @@ def filter_organize_bills(topics_followed, locations_followed):
 
 
 def bill_detail(request, bill_session, bill_identifier):
-    bill = Bill.objects.get(legislative_session__identifier=bill_session, identifier=bill_identifier)
-
+    bill = get_object_or_404(Bill, legislative_session__identifier=bill_session, identifier=bill_identifier)
     sponsors = bill.sponsorships.all().select_related('person', 'organization')
 
     for sponsor in sponsors:
